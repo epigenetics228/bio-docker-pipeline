@@ -15,3 +15,21 @@ jobs:
 
       - name: Run analysis test
         run: docker run bio_pipeline
+        
+      - name: Step 1: Alignment (BWA)
+        run: docker run -v .:/app variant-caller bwa mem ref.fa reads.fq >alignment.sam
+        
+      - name: Step 2: Sort and Index (Samtools)
+        run: |
+          docker run -v .:/app variant-caller samtools sort alignment.sam -o alignment_sorted.bam
+          docker run -v .:/app variant-caller samtools index alignment_sorted.bam
+          
+      - name: Step 3: Variant Calling (BCFtools)
+        run: |
+          docker run -v .:/app variant-caller bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf
+          
+      - name: Step 4: Upload Result
+        uses: actions/upload-artifact@v4
+        with:
+          name: genetic-variants  # Имя архива, который вы скачаете
+          path: variants.bcf      # Путь к нашему итоговому файлу

@@ -1,14 +1,16 @@
-FROM python:3.11-slim
+# Используем базовый образ с Python
+FROM python:3.9-slim
 
-# Устанавливаем системные зависимости
-RUN apt-get update && apt-get install -y samtools
+# Устанавливаем системные утилиты для биоинформатики 🧬
+RUN apt-get update && apt-get install -y \
+    bwa \
+    samtools \
+    bcftools \
+    && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем Python-библиотеки
-RUN pip install biopython pandas
+# Устанавливаем библиотеки Python, если они нужны для отчетов
+RUN pip install pandas matplotlib
 
-# Настраиваем рабочую папку и копируем код
+# Копируем наши скрипты
+COPY . /app
 WORKDIR /app
-COPY analyze.py .
-
-# Запускаем скрипт
-CMD ["python", "analyze.py"]
