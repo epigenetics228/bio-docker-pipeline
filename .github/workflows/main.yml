@@ -16,6 +16,9 @@ jobs:
       - name: Run analysis test
         run: docker run variant-caller
         
+      - name: "Step 0: Indexing Reference"
+        run: docker run -v .:/app variant-caller index
+        
       - name: "Step 1: Alignment (BWA)"
         run: docker run -v .:/app variant-caller bwa mem ref.fa reads.fq >alignment.sam
         
