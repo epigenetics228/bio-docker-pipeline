@@ -1,17 +1,19 @@
 name: Bio Pipeline CI
+
 on:
   push:
     branches: [ "main" ]
+  # Этот блок добавляет кнопку "Run workflow" во вкладке Actions
   workflow_dispatch:
     inputs:
-      min_quality:
-        description: 'Минимальное качество для фильтрации'
-        required: true
-        default: '20'
       alignment_mode:
-        description: 'Режим BWA (например, mem)'
+        description: 'Режим BWA (например: mem, aln, bwasw)'
         required: true
         default: 'mem'
+      min_qual:
+        description: 'Минимальное качество (QUAL) для фильтрации'
+        required: true
+        default: '20'
 
 jobs:
   build-and-test:
@@ -30,18 +32,22 @@ jobs:
         run: docker run -v .:/app -w /app variant-caller bwa index ref.fa
         
       - name: "Step 1: Alignment (BWA)"
-        run: docker run -v .:/app variant-caller bwa mem ref.fa reads.fq >alignment.sam
+        # Конструкция ${{ ... || 'default' }} позволяет коду работать и при обычном push
+        run: |
+          MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
+          docker run -v .:/app -w /app variant-caller bwa $MODE ref.fa reads.fq > alignment.sam
         
       - name: "Step 2: Sort and Index (Samtools)"
         run: |
-          docker run -v .:/app variant-caller samtools sort alignment.sam -o alignment_sorted.bam
-          docker run -v .:/app variant-caller samtools index alignment_sorted.bam
+          docker run -v .:/app -w /app variant-caller samtools sort alignment.sam -o alignment_sorted.bam
+          docker run -v .:/app -w /app variant-caller samtools index alignment_sorted.bam
           
       - name: "Step 3: Variant Calling (BCFtools)"
-        run: docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf"
+        run: |
+          docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf"
           
       - name: "Step 4: Upload Result"
         uses: actions/upload-artifact@v4
         with:
-          name: genetic-variants  # Имя архива, который вы скачаете
-          path: variants.bcf      # Путь к нашему итоговому файлу
+          name: genetic-variants
+          path: variants.bcf
