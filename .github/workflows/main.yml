@@ -28,8 +28,7 @@ jobs:
           docker run -v .:/app variant-caller samtools index alignment_sorted.bam
           
       - name: "Step 3: Variant Calling (BCFtools)"
-        run: |
-          docker run -v .:/app variant-caller bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf
+        run: docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf"
           
       - name: "Step 4: Upload Result"
         uses: actions/upload-artifact@v4
