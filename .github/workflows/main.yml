@@ -30,10 +30,20 @@ jobs:
       - name: "Step 0: Indexing Reference"
         run: docker run -v .:/app -w /app variant-caller bwa index ref.fa
         
+      - name: "Step 0.5: Trimming and QC (fastp)"
+        run: |
+          docker run -v .:/app -w /app variant-caller \
+          fastp -i ${{ matrix.sample }}.fq \
+                -o ${{ matrix.sample }}_clean.fq \
+                -h ${{ matrix.sample }}_report.html \
+                -j ${{ matrix.sample }}_report.json
+
       - name: "Step 1: Alignment (BWA)"
         run: |
           MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
-          docker run -v .:/app -w /app variant-caller bwa $MODE ref.fa ${{ matrix.sample }}.fq > ${{ matrix.sample }}.sam
+          # Используем ОЧИЩЕННЫЙ файл _clean.fq
+          docker run -v .:/app -w /app variant-caller \
+          bwa $MODE ref.fa ${{ matrix.sample }}_clean.fq > ${{ matrix.sample }}.sam
         
       - name: "Step 2: Sort and Index (Samtools)"
         run: |
@@ -44,9 +54,10 @@ jobs:
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf"
           
-      - name: "Step 4: Upload Result"
+      - name: "Step 4: Upload QC and Results"
         uses: actions/upload-artifact@v4
         with:
-          # Каждому образцу — свой отдельный архив в результатах
-          name: genetic-variants-${{ matrix.sample }}
-          path: ${{ matrix.sample }}_variants.bcf
+          name: full-results-${{ matrix.sample }}
+          path: |
+            ${{ matrix.sample }}_variants.bcf
+            qc_reports/

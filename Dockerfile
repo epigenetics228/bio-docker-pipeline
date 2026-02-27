@@ -14,3 +14,12 @@ RUN pip install pandas matplotlib
 # Копируем наши скрипты
 COPY . /app
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y fastqc
+
+RUN apt-get update && apt-get install -y \
+    bwa \
+    samtools \
+    bcftools \
+    fastp \
+    && rm -rf /var/lib/apt/lists/*
