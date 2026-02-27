@@ -3,21 +3,23 @@ name: Bio Pipeline CI
 on:
   push:
     branches: [ "main" ]
-  # Этот блок добавляет кнопку "Run workflow" во вкладке Actions
   workflow_dispatch:
     inputs:
       alignment_mode:
-        description: 'Режим BWA (например: mem, aln, bwasw)'
+        description: 'Режим BWA (mem, aln)'
         required: true
         default: 'mem'
-      min_qual:
-        description: 'Минимальное качество (QUAL) для фильтрации'
-        required: true
-        default: '20'
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # --- ВОТ ОНО, МАСШТАБИРОВАНИЕ! ---
+    strategy:
+      matrix:
+        # Здесь ты можешь добавить хоть 20 образцов через запятую
+        sample: [Sample1, Sample2]
+    # ---------------------------------
+    
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -25,29 +27,26 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      - name: Run analysis test
-        run: docker run variant-caller
-        
       - name: "Step 0: Indexing Reference"
         run: docker run -v .:/app -w /app variant-caller bwa index ref.fa
         
       - name: "Step 1: Alignment (BWA)"
-        # Конструкция ${{ ... || 'default' }} позволяет коду работать и при обычном push
         run: |
           MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
-          docker run -v .:/app -w /app variant-caller bwa $MODE ref.fa reads.fq > alignment.sam
+          docker run -v .:/app -w /app variant-caller bwa $MODE ref.fa ${{ matrix.sample }}.fq > ${{ matrix.sample }}.sam
         
       - name: "Step 2: Sort and Index (Samtools)"
         run: |
-          docker run -v .:/app -w /app variant-caller samtools sort alignment.sam -o alignment_sorted.bam
-          docker run -v .:/app -w /app variant-caller samtools index alignment_sorted.bam
+          docker run -v .:/app -w /app variant-caller samtools sort ${{ matrix.sample }}.sam -o ${{ matrix.sample }}_sorted.bam
+          docker run -v .:/app -w /app variant-caller samtools index ${{ matrix.sample }}_sorted.bam
           
       - name: "Step 3: Variant Calling (BCFtools)"
         run: |
-          docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa alignment_sorted.bam | bcftools call -mv -Ob -o variants.bcf"
+          docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf"
           
       - name: "Step 4: Upload Result"
         uses: actions/upload-artifact@v4
         with:
-          name: genetic-variants
-          path: variants.bcf
+          # Каждому образцу — свой отдельный архив в результатах
+          name: genetic-variants-${{ matrix.sample }}
+          path: ${{ matrix.sample }}_variants.bcf
