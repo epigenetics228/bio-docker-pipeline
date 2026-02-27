@@ -11,10 +11,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t bio_pipeline .
+        run: docker build -t variant-caller .
 
       - name: Run analysis test
-        run: docker run bio_pipeline
+        run: docker run variant-caller
         
       - name: "Step 1: Alignment (BWA)"
         run: docker run -v .:/app variant-caller bwa mem ref.fa reads.fq >alignment.sam
