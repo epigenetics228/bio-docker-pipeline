@@ -2,6 +2,16 @@ name: Bio Pipeline CI
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      min_quality:
+        description: 'Минимальное качество для фильтрации'
+        required: true
+        default: '20'
+      alignment_mode:
+        description: 'Режим BWA (например, mem)'
+        required: true
+        default: 'mem'
 
 jobs:
   build-and-test:
