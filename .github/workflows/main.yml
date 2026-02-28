@@ -5,6 +5,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions: # Добавляем права на запись прямо в код
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   analysis:
     runs-on: ubuntu-latest
@@ -18,15 +23,15 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      - name: "Bioinformatic Pipeline"
+      - name: "Bioinformatic Analysis"
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "
           bwa index ref.fa 2> index.log && \
           fastp -i ${{ matrix.sample }}.fq -o clean.fq -h ${{ matrix.sample }}_fastp.html 2> fastp.log && \
-          bwa mem ref.fa clean.fq > align.sam 2> align.log && \
+          bwa mem ref.fa clean.fq > align.sam && \
           samtools sort align.sam -o sorted.bam && \
           bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf && \
-          bcftools view variants.bcf > variants.vcf"
+          bcftools view variants.bcf > ${{ matrix.sample }}_variants.vcf"
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
@@ -43,25 +48,29 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+
       - name: Download all logs
         uses: actions/download-artifact@v4
         with:
           path: all_logs/
+
       - name: Generate MultiQC
         run: |
           docker build -t variant-caller .
           docker run -v .:/app -w /app variant-caller multiqc all_logs/ -o multiqc_report/
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./multiqc_report
+
       - name: Send Telegram Notification
+        if: always()
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            ✅ Конвейер для ${{ github.repository }} завершен!
-            📊 Отчет MultiQC опубликован на GitHub Pages.
-            🔬 Образцы: Sample1, Sample2.
+            🚀 Пайплайн завершен!
+            📊 Отчет: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/

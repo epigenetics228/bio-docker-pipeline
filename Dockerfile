@@ -1,22 +1,16 @@
-# Используем стабильный образ Python
 FROM python:3.9-slim
 
-# Устанавливаем всё необходимое одной командой (это экономит место)
+# Устанавливаем всё одной командой для стабильности
 RUN apt-get update && apt-get install -y \
     bwa \
     samtools \
     bcftools \
     fastp \
-    fastqc \
     default-jre-headless \
     snpeff \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем MultiQC
-RUN pip install --no-cache-dir multiqc pandas matplotlib
+RUN pip install --no-cache-dir multiqc
 
 WORKDIR /app
 COPY . /app
-
-# По умолчанию запускаем оболочку
-CMD ["/bin/bash"]
