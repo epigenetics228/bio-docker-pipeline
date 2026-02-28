@@ -22,22 +22,22 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: "Hybrid Data Loading (Local or Cloud)"
+      # ВСТАВЛЯЕМ ГИБРИДНУЮ ЛОГИКУ ТУТ
+      - name: "Hybrid Data Loading"
         run: |
-          # Проверяем референс: если его нет в папке, качаем из секрета
+          # 1. Проверяем референс. Если его нет в папке, качаем по ссылке.
           if [ ! -f ref.fa ]; then
-            echo "Reference not found locally, downloading..."
-            wget -O ref.fa "${{ secrets.URL_REFERENCE }}"
+            echo "Local ref.fa not found, downloading from cloud..."
+            wget -O ref.fa "${{ secrets.URL_REFERENCE }}" || echo "Warning: URL_REFERENCE is empty"
           fi
 
-          # Проверяем образец из матрицы
+          # 2. Проверяем файл образца. Если его нет, скачиваем.
           if [ ! -f ${{ matrix.sample }}.fq ]; then
-            echo "Sample ${{ matrix.sample }} not found locally, downloading..."
-            # Выбираем ссылку в зависимости от текущего образца
+            echo "Local file ${{ matrix.sample }}.fq not found, fetching from cloud..."
             if [ "${{ matrix.sample }}" == "Sample1" ]; then
-              wget -O Sample1.fq "${{ secrets.URL_SAMPLE1 }}"
+              wget -O Sample1.fq "${{ secrets.URL_SAMPLE1 }}" || echo "Warning: URL_SAMPLE1 is empty"
             elif [ "${{ matrix.sample }}" == "Sample2" ]; then
-              wget -O Sample2.fq "${{ secrets.URL_SAMPLE2 }}"
+              wget -O Sample2.fq "${{ secrets.URL_SAMPLE2 }}" || echo "Warning: URL_SAMPLE2 is empty"
             fi
           fi
 
