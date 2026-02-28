@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      alignment_mode:
+        description: 'Режим BWA (mem, aln)'
+        required: true
+        default: 'mem'
 
 jobs:
   analysis:
@@ -18,28 +23,54 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      # Нам нужны логи для MultiQC, поэтому сохраняем вывод команд в файлы .log
-      - name: "Run Analysis with Logging"
+      - name: "Step 0: Indexing Reference"
+        run: docker run -v .:/app -w /app variant-caller bwa index ref.fa 2> bwa_index.log
+
+      - name: "Step 0.5: Trimming and QC (fastp)"
+        run: |
+          docker run -v .:/app -w /app variant-caller \
+          fastp -i ${{ matrix.sample }}.fq \
+                -o ${{ matrix.sample }}_clean.fq \
+                -h ${{ matrix.sample }}_report.html \
+                -j ${{ matrix.sample }}_report.json 2> fastp.log
+
+      - name: "Step 1: Alignment (BWA)"
+        run: |
+          MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
+          docker run -v .:/app -w /app variant-caller \
+          bwa $MODE ref.fa ${{ matrix.sample }}_clean.fq > ${{ matrix.sample }}.sam 2> bwa_mem.log
+        
+      - name: "Step 2: Sort and Index (Samtools)"
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "
-          bwa index ref.fa 2> bwa_index.log && \
-          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h report.html 2> fastp.log && \
-          bwa mem ref.fa clean.fq > align.sam 2> bwa_mem.log && \
-          samtools sort align.sam -o sorted.bam 2> samtools.log && \
-          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf 2> bcftools.log"
+          samtools sort ${{ matrix.sample }}.sam -o ${{ matrix.sample }}_sorted.bam && \
+          samtools index ${{ matrix.sample }}_sorted.bam" 2> samtools.log
+          
+      - name: "Step 3: Variant Calling (BCFtools)"
+        run: |
+          docker run -v .:/app -w /app variant-caller sh -c "
+          bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | \
+          bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf" 2> bcftools.log
+          
+      - name: "Step 3.5: Variant Annotation (SnpEff)"
+        run: |
+          docker run -v .:/app -w /app variant-caller sh -c "
+          bcftools view ${{ matrix.sample }}_variants.bcf > variants.vcf && \
+          snpeff GRCh38.105 variants.vcf > ${{ matrix.sample }}_annotated.vcf" 2> snpeff.log
 
-      # Загружаем ВСЕ логи и отчеты как артефакты для этого образца
-      - name: Upload Logs for MultiQC
+      - name: Upload Logs and Results
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ matrix.sample }}
+          name: logs-and-results-${{ matrix.sample }}
           path: |
             *.log
             *.html
+            *.json
+            *.vcf
             *.bcf
 
   report:
-    needs: analysis # Ждем, пока все образцы из матрицы закончат работу
+    needs: analysis
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
@@ -48,7 +79,6 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      # Скачиваем логи ВСЕХ образцов в одну папку
       - name: Download all logs
         uses: actions/download-artifact@v4
         with:
@@ -77,56 +107,5 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
             ✅ Анализ биоинформатического конвейера завершен!
-            📊 Отчет MultiQC готов и доступен в артефактах.
-            🧬 Все мутации проаннотированы с помощью SnpEff.    
-    
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t variant-caller .
-
-      - name: "Step 0: Indexing Reference"
-        run: docker run -v .:/app -w /app variant-caller bwa index ref.fa
-        
-      - name: "Step 0.5: Trimming and QC (fastp)"
-        run: |
-          docker run -v .:/app -w /app variant-caller \
-          fastp -i ${{ matrix.sample }}.fq \
-                -o ${{ matrix.sample }}_clean.fq \
-                -h ${{ matrix.sample }}_report.html \
-                -j ${{ matrix.sample }}_report.json
-
-      - name: "Step 1: Alignment (BWA)"
-        run: |
-          MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
-          # Используем ОЧИЩЕННЫЙ файл _clean.fq
-          docker run -v .:/app -w /app variant-caller \
-          bwa $MODE ref.fa ${{ matrix.sample }}_clean.fq > ${{ matrix.sample }}.sam
-        
-      - name: "Step 2: Sort and Index (Samtools)"
-        run: |
-          docker run -v .:/app -w /app variant-caller samtools sort ${{ matrix.sample }}.sam -o ${{ matrix.sample }}_sorted.bam
-          docker run -v .:/app -w /app variant-caller samtools index ${{ matrix.sample }}_sorted.bam
-          
-      - name: "Step 3: Variant Calling (BCFtools)"
-        run: |
-          docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf"
-          
-      - name: "Step 3.5: Variant Annotation (SnpEff)"
-        run: |
-          docker run -v .:/app -w /app variant-caller sh -c "
-          # 1. Переводим BCF в VCF для SnpEff
-          bcftools view variants.bcf > variants.vcf && \
-          # 2. Аннотируем (используем базу данных GRCh38 для примера)
-          # В реальной задаче нужно выбрать базу под твой геном
-          snpeff GRCh38.105 variants.vcf > variants_annotated.vcf 2> snpeff.log"    
-          
-      - name: "Step 4: Upload QC and Results"
-        uses: actions/upload-artifact@v4
-        with:
-          name: full-results-${{ matrix.sample }}
-          path: |
-            ${{ matrix.sample }}_variants.bcf
-            qc_reports/
+            📊 Отчет MultiQC готов и опубликован на GitHub Pages.
+            🧬 Мутации проаннотированы с помощью SnpEff.
