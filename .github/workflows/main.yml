@@ -1,14 +1,9 @@
-name: Bio Pipeline Pro with MultiQC
+name: Bio Pipeline Pro
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
-    inputs:
-      alignment_mode:
-        description: 'Режим BWA (mem, aln)'
-        required: true
-        default: 'mem'
 
 jobs:
   analysis:
@@ -23,51 +18,24 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      - name: "Step 0: Indexing Reference"
-        run: docker run -v .:/app -w /app variant-caller bwa index ref.fa 2> bwa_index.log
-
-      - name: "Step 0.5: Trimming and QC (fastp)"
-        run: |
-          docker run -v .:/app -w /app variant-caller \
-          fastp -i ${{ matrix.sample }}.fq \
-                -o ${{ matrix.sample }}_clean.fq \
-                -h ${{ matrix.sample }}_report.html \
-                -j ${{ matrix.sample }}_report.json 2> fastp.log
-
-      - name: "Step 1: Alignment (BWA)"
-        run: |
-          MODE=${{ github.event.inputs.alignment_mode || 'mem' }}
-          docker run -v .:/app -w /app variant-caller \
-          bwa $MODE ref.fa ${{ matrix.sample }}_clean.fq > ${{ matrix.sample }}.sam 2> bwa_mem.log
-        
-      - name: "Step 2: Sort and Index (Samtools)"
+      - name: "Bioinformatic Pipeline"
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "
-          samtools sort ${{ matrix.sample }}.sam -o ${{ matrix.sample }}_sorted.bam && \
-          samtools index ${{ matrix.sample }}_sorted.bam" 2> samtools.log
-          
-      - name: "Step 3: Variant Calling (BCFtools)"
-        run: |
-          docker run -v .:/app -w /app variant-caller sh -c "
-          bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | \
-          bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf" 2> bcftools.log
-          
-      - name: "Step 3.5: Variant Annotation (SnpEff)"
-        run: |
-          docker run -v .:/app -w /app variant-caller sh -c "
-          bcftools view ${{ matrix.sample }}_variants.bcf > variants.vcf && \
-          snpeff GRCh38.105 variants.vcf > ${{ matrix.sample }}_annotated.vcf" 2> snpeff.log
+          bwa index ref.fa 2> index.log && \
+          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h ${{ matrix.sample }}_fastp.html 2> fastp.log && \
+          bwa mem ref.fa clean.fq > align.sam 2> align.log && \
+          samtools sort align.sam -o sorted.bam && \
+          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf && \
+          bcftools view variants.bcf > variants.vcf"
 
-      - name: Upload Logs and Results
+      - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: logs-and-results-${{ matrix.sample }}
+          name: result-${{ matrix.sample }}
           path: |
-            *.log
-            *.html
-            *.json
             *.vcf
-            *.bcf
+            *.html
+            *.log
 
   report:
     needs: analysis
@@ -75,37 +43,25 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t variant-caller .
-
       - name: Download all logs
         uses: actions/download-artifact@v4
         with:
           path: all_logs/
-
-      - name: "Generate MultiQC Report"
+      - name: Generate MultiQC
         run: |
+          docker build -t variant-caller .
           docker run -v .:/app -w /app variant-caller multiqc all_logs/ -o multiqc_report/
-          
-      - name: Deploy Report to GitHub Pages
+      - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./multiqc_report    
-
-      - name: Upload Final MultiQC Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: Final_MultiQC_Report
-          path: multiqc_report/
-          
+          publish_dir: ./multiqc_report
       - name: Send Telegram Notification
         uses: appleboy/telegram-action@master
         with:
           to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            ✅ Анализ биоинформатического конвейера завершен!
-            📊 Отчет MultiQC готов и опубликован на GitHub Pages.
-            🧬 Мутации проаннотированы с помощью SnpEff.
+            ✅ Конвейер для ${{ github.repository }} завершен!
+            📊 Отчет MultiQC опубликован на GitHub Pages.
+            🔬 Образцы: Sample1, Sample2.

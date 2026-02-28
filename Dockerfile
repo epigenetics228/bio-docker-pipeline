@@ -1,36 +1,22 @@
-# Используем базовый образ с Python
+# Используем стабильный образ Python
 FROM python:3.9-slim
 
-# Устанавливаем системные утилиты для биоинформатики 🧬
-RUN apt-get update && apt-get install -y \
-    bwa \
-    samtools \
-    bcftools \
-    && rm -rf /var/lib/apt/lists/*
-
-# Устанавливаем библиотеки Python, если они нужны для отчетов
-RUN pip install pandas matplotlib
-
-# Копируем наши скрипты
-COPY . /app
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y fastqc
-
+# Устанавливаем всё необходимое одной командой (это экономит место)
 RUN apt-get update && apt-get install -y \
     bwa \
     samtools \
     bcftools \
     fastp \
-    && rm -rf /var/lib/apt/lists/*
-	
-# Добавь это в свой Dockerfile
-RUN apt-get update && apt-get install -y \
-    python3-pip \
-    && pip3 install multiqc --break-system-packages	
-
-# Добавь это в свой Dockerfile
-RUN apt-get update && apt-get install -y \
-    openjdk-11-jre-headless \
+    fastqc \
+    default-jre-headless \
     snpeff \
-    && rm -rf /var/lib/apt/lists/*	
+    && rm -rf /var/lib/apt/lists/*
+
+# Устанавливаем MultiQC
+RUN pip install --no-cache-dir multiqc pandas matplotlib
+
+WORKDIR /app
+COPY . /app
+
+# По умолчанию запускаем оболочку
+CMD ["/bin/bash"]
