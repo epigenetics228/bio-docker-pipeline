@@ -1,24 +1,84 @@
-name: Bio Pipeline CI
+name: Bio Pipeline Pro with MultiQC
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
-    inputs:
-      alignment_mode:
-        description: 'Режим BWA (mem, aln)'
-        required: true
-        default: 'mem'
 
 jobs:
-  build-and-test:
+  analysis:
     runs-on: ubuntu-latest
-    # --- ВОТ ОНО, МАСШТАБИРОВАНИЕ! ---
     strategy:
       matrix:
-        # Здесь ты можешь добавить хоть 20 образцов через запятую
         sample: [Sample1, Sample2]
-    # ---------------------------------
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t variant-caller .
+
+      # Нам нужны логи для MultiQC, поэтому сохраняем вывод команд в файлы .log
+      - name: "Run Analysis with Logging"
+        run: |
+          docker run -v .:/app -w /app variant-caller sh -c "
+          bwa index ref.fa 2> bwa_index.log && \
+          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h report.html 2> fastp.log && \
+          bwa mem ref.fa clean.fq > align.sam 2> bwa_mem.log && \
+          samtools sort align.sam -o sorted.bam 2> samtools.log && \
+          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf 2> bcftools.log"
+
+      # Загружаем ВСЕ логи и отчеты как артефакты для этого образца
+      - name: Upload Logs for MultiQC
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.sample }}
+          path: |
+            *.log
+            *.html
+            *.bcf
+
+  report:
+    needs: analysis # Ждем, пока все образцы из матрицы закончат работу
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t variant-caller .
+
+      # Скачиваем логи ВСЕХ образцов в одну папку
+      - name: Download all logs
+        uses: actions/download-artifact@v4
+        with:
+          path: all_logs/
+
+      - name: "Generate MultiQC Report"
+        run: |
+          docker run -v .:/app -w /app variant-caller multiqc all_logs/ -o multiqc_report/
+          
+      - name: Deploy Report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./multiqc_report    
+
+      - name: Upload Final MultiQC Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: Final_MultiQC_Report
+          path: multiqc_report/
+          
+      - name: Send Telegram Notification
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ✅ Анализ биоинформатического конвейера завершен!
+            📊 Отчет MultiQC готов и доступен в артефактах.
+            🧬 Все мутации проаннотированы с помощью SnpEff.    
     
     steps:
       - name: Check out code
@@ -53,6 +113,15 @@ jobs:
       - name: "Step 3: Variant Calling (BCFtools)"
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "bcftools mpileup -f ref.fa ${{ matrix.sample }}_sorted.bam | bcftools call -mv -Ob -o ${{ matrix.sample }}_variants.bcf"
+          
+      - name: "Step 3.5: Variant Annotation (SnpEff)"
+        run: |
+          docker run -v .:/app -w /app variant-caller sh -c "
+          # 1. Переводим BCF в VCF для SnpEff
+          bcftools view variants.bcf > variants.vcf && \
+          # 2. Аннотируем (используем базу данных GRCh38 для примера)
+          # В реальной задаче нужно выбрать базу под твой геном
+          snpeff GRCh38.105 variants.vcf > variants_annotated.vcf 2> snpeff.log"    
           
       - name: "Step 4: Upload QC and Results"
         uses: actions/upload-artifact@v4

@@ -23,3 +23,14 @@ RUN apt-get update && apt-get install -y \
     bcftools \
     fastp \
     && rm -rf /var/lib/apt/lists/*
+	
+# Добавь это в свой Dockerfile
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && pip3 install multiqc --break-system-packages	
+
+# Добавь это в свой Dockerfile
+RUN apt-get update && apt-get install -y \
+    openjdk-11-jre-headless \
+    snpeff \
+    && rm -rf /var/lib/apt/lists/*	
