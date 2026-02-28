@@ -1,51 +1,79 @@
-name: Bio Pipeline Auto-Scale
+name: Bio Pipeline Cloud Pro
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
 
-jobs:
-  # ЗАДАЧА 1: НАХОДИМ ВСЕ ОБРАЗЦЫ
-  find-samples:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: set-matrix
-        # Этот скрипт ищет все .fq файлы и превращает их имена в список для GitHub
-        run: |
-          SAMPLES=$(ls *.fq | sed 's/\.fq//' | jq -R -s -c 'split("\n") | del(.[] | select(. == ""))')
-          echo "matrix=$SAMPLES" >> $GITHUB_OUTPUT
+# Исправляем ошибку 403 (Permission denied) для публикации отчетов
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
-  # ЗАДАЧА 2: АНАЛИЗИРУЕМ (теперь список берется из первой задачи)
+jobs:
   analysis:
-    needs: find-samples
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        sample: ${{ fromJson(needs.find-samples.outputs.matrix) }}
+        # Здесь перечисляем имена образцов заказчика
+        sample: [Sample1, Sample2]
     steps:
       - name: Check out code
         uses: actions/checkout@v4
 
+      # ЭТАП СКАНЧИВАНИЯ: Робот берет ссылки из секретов и сохраняет как .fq файлы
+      - name: Download Data from Cloud
+        run: |
+          if [ "${{ matrix.sample }}" == "Sample1" ]; then
+            wget -O Sample1.fq "${{ secrets.URL_SAMPLE1 }}"
+          elif [ "${{ matrix.sample }}" == "Sample2" ]; then
+            wget -O Sample2.fq "${{ secrets.URL_SAMPLE2 }}"
+          fi
+          # Также скачиваем референс, если его нет в репозитории
+          if [ ! -f ref.fa ]; then
+            wget -O ref.fa "${{ secrets.URL_REFERENCE }}"
+          fi
+
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      - name: "Run Pipeline for ${{ matrix.sample }}"
+      - name: "Bioinformatic Pipeline"
         run: |
+          # Объединенный блок команд предотвращает ошибку 'steps is already defined'
           docker run -v .:/app -w /app variant-caller sh -c "
-          bwa index ref.fa && \
-          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h report.html && \
-          bwa mem ref.fa clean.fq > align.sam && \
+          bwa index ref.fa 2> index.log && \
+          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h ${{ matrix.sample }}_fastp.html 2> fastp.log && \
+          bwa mem ref.fa clean.fq > align.sam 2> align.log && \
           samtools sort align.sam -o sorted.bam && \
-          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf"
+          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf && \
+          bcftools view variants.bcf > ${{ matrix.sample }}_variants.vcf"
 
-      - name: Upload Results
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: results-${{ matrix.sample }}
           path: |
-            *.bcf
-            report.html
+            *.vcf
+            *.html
+            *.log
+
+  report:
+    needs: analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: all_logs/
+      - name: Generate MultiQC
+        run: |
+          docker build -t variant-caller .
+          docker run -v .:/app -w /app variant-caller multiqc all_logs/ -o multiqc_report/
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./multiqc_report
