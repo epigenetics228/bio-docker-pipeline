@@ -22,17 +22,23 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      # ЭТАП СКАНЧИВАНИЯ: Робот берет ссылки из секретов и сохраняет как .fq файлы
-      - name: Download Data from Cloud
+      - name: "Hybrid Data Loading (Local or Cloud)"
         run: |
-          if [ "${{ matrix.sample }}" == "Sample1" ]; then
-            wget -O Sample1.fq "${{ secrets.URL_SAMPLE1 }}"
-          elif [ "${{ matrix.sample }}" == "Sample2" ]; then
-            wget -O Sample2.fq "${{ secrets.URL_SAMPLE2 }}"
-          fi
-          # Также скачиваем референс, если его нет в репозитории
+          # Проверяем референс: если его нет в папке, качаем из секрета
           if [ ! -f ref.fa ]; then
+            echo "Reference not found locally, downloading..."
             wget -O ref.fa "${{ secrets.URL_REFERENCE }}"
+          fi
+
+          # Проверяем образец из матрицы
+          if [ ! -f ${{ matrix.sample }}.fq ]; then
+            echo "Sample ${{ matrix.sample }} not found locally, downloading..."
+            # Выбираем ссылку в зависимости от текущего образца
+            if [ "${{ matrix.sample }}" == "Sample1" ]; then
+              wget -O Sample1.fq "${{ secrets.URL_SAMPLE1 }}"
+            elif [ "${{ matrix.sample }}" == "Sample2" ]; then
+              wget -O Sample2.fq "${{ secrets.URL_SAMPLE2 }}"
+            fi
           fi
 
       - name: Build Docker image
