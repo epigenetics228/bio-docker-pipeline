@@ -1,21 +1,31 @@
-name: Bio Pipeline Pro
+name: Bio Pipeline Auto-Scale
 
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
 
-permissions: # Добавляем права на запись прямо в код
-  contents: write
-  pages: write
-  id-token: write
-
 jobs:
+  # ЗАДАЧА 1: НАХОДИМ ВСЕ ОБРАЗЦЫ
+  find-samples:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        # Этот скрипт ищет все .fq файлы и превращает их имена в список для GitHub
+        run: |
+          SAMPLES=$(ls *.fq | sed 's/\.fq//' | jq -R -s -c 'split("\n") | del(.[] | select(. == ""))')
+          echo "matrix=$SAMPLES" >> $GITHUB_OUTPUT
+
+  # ЗАДАЧА 2: АНАЛИЗИРУЕМ (теперь список берется из первой задачи)
   analysis:
+    needs: find-samples
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        sample: [Sample1, Sample2]
+        sample: ${{ fromJson(needs.find-samples.outputs.matrix) }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -23,54 +33,19 @@ jobs:
       - name: Build Docker image
         run: docker build -t variant-caller .
 
-      - name: "Bioinformatic Analysis"
+      - name: "Run Pipeline for ${{ matrix.sample }}"
         run: |
           docker run -v .:/app -w /app variant-caller sh -c "
-          bwa index ref.fa 2> index.log && \
-          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h ${{ matrix.sample }}_fastp.html 2> fastp.log && \
+          bwa index ref.fa && \
+          fastp -i ${{ matrix.sample }}.fq -o clean.fq -h report.html && \
           bwa mem ref.fa clean.fq > align.sam && \
           samtools sort align.sam -o sorted.bam && \
-          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf && \
-          bcftools view variants.bcf > ${{ matrix.sample }}_variants.vcf"
+          bcftools mpileup -f ref.fa sorted.bam | bcftools call -mv -Ob -o variants.bcf"
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
         with:
-          name: result-${{ matrix.sample }}
+          name: results-${{ matrix.sample }}
           path: |
-            *.vcf
-            *.html
-            *.log
-
-  report:
-    needs: analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Download all logs
-        uses: actions/download-artifact@v4
-        with:
-          path: all_logs/
-
-      - name: Generate MultiQC
-        run: |
-          docker build -t variant-caller .
-          docker run -v .:/app -w /app variant-caller multiqc all_logs/ -o multiqc_report/
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./multiqc_report
-
-      - name: Send Telegram Notification
-        if: always()
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          message: |
-            🚀 Пайплайн завершен!
-            📊 Отчет: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+            *.bcf
+            report.html
